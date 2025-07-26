@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: event-sourcing-postgres
+    environment:
+      POSTGRES_DB: event_store
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - event-sourcing-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: event-sourcing-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: rabbitmq
+      RABBITMQ_DEFAULT_PASS: password
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - event-sourcing-network
+
+  account-command-service:
+    build: ./account-command-service
+    container_name: account-command-service
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/event_store
+      - RABBITMQ_URL=amqp://rabbitmq:password@rabbitmq:5672
+      - JWT_SECRET=your-jwt-secret-key
+    ports:
+      - "3001:3000"
+    depends_on:
+      - postgres
+      - rabbitmq
+    networks:
+      - event-sourcing-network
+    restart: unless-stopped
+
+  event-store-service:
+    build: ./event-store-service
+    container_name: event-store-service
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/event_store
+      - RABBITMQ_URL=amqp://rabbitmq:password@rabbitmq:5672
+    ports:
+      - "3002:3000"
+    depends_on:
+      - postgres
+      - rabbitmq
+    networks:
+      - event-sourcing-network
+    restart: unless-stopped
+
+  query-read-service:
+    build: ./query-read-service
+    container_name: query-read-service
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/event_store
+      - RABBITMQ_URL=amqp://rabbitmq:password@rabbitmq:5672
+    ports:
+      - "3003:3000"
+    depends_on:
+      - postgres
+      - rabbitmq
+    networks:
+      - event-sourcing-network
+    restart: unless-stopped
+
+  transaction-processor-service:
+    build: ./transaction-processor-service
+    container_name: transaction-processor-service
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/event_store
+      - RABBITMQ_URL=amqp://rabbitmq:password@rabbitmq:5672
+    depends_on:
+      - postgres
+      - rabbitmq
+    networks:
+      - event-sourcing-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+
+networks:
+  event-sourcing-network:
+    driver: bridge
