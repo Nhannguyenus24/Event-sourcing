@@ -121,3 +121,138 @@ ON CONFLICT DO NOTHING;
 
 -- Refresh the materialized view
 SELECT refresh_account_balances_summary();
+
+-- ============================================================================
+-- SAGA PATTERN TABLES FOR FULL COMPENSATION LOGIC
+-- ============================================================================
+
+-- Saga instances table to track long-running transactions
+CREATE TABLE IF NOT EXISTS saga_instances (
+    saga_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    saga_type VARCHAR(50) NOT NULL, -- 'MONEY_TRANSFER', 'MULTI_STEP_PAYMENT', etc.
+    status VARCHAR(20) NOT NULL DEFAULT 'STARTED', -- 'STARTED', 'COMPLETED', 'COMPENSATING', 'FAILED', 'COMPENSATED'
+    correlation_id VARCHAR(255), -- Original transfer request ID
+    payload JSONB NOT NULL, -- Store original request data
+    current_step INTEGER DEFAULT 0,
+    total_steps INTEGER DEFAULT 0,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE,
+    timeout_at TIMESTAMP WITH TIME ZONE,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    created_by VARCHAR(100),
+    metadata JSONB DEFAULT '{}'
+);
+
+-- Indexes for saga instances
+CREATE INDEX IF NOT EXISTS idx_saga_instances_status ON saga_instances(status);
+CREATE INDEX IF NOT EXISTS idx_saga_instances_type ON saga_instances(saga_type);
+CREATE INDEX IF NOT EXISTS idx_saga_instances_correlation_id ON saga_instances(correlation_id);
+CREATE INDEX IF NOT EXISTS idx_saga_instances_started_at ON saga_instances(started_at);
+CREATE INDEX IF NOT EXISTS idx_saga_instances_timeout_at ON saga_instances(timeout_at);
+
+-- Saga steps table to track individual steps within a saga
+CREATE TABLE IF NOT EXISTS saga_steps (
+    step_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    saga_id UUID NOT NULL,
+    step_number INTEGER NOT NULL,
+    step_name VARCHAR(100) NOT NULL, -- 'WITHDRAW_FROM_SOURCE', 'DEPOSIT_TO_TARGET', etc.
+    step_type VARCHAR(20) NOT NULL, -- 'FORWARD', 'COMPENSATION'
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING', -- 'PENDING', 'EXECUTING', 'COMPLETED', 'FAILED', 'COMPENSATED'
+    input_data JSONB, -- Data needed for this step
+    output_data JSONB, -- Result data from step execution
+    event_ids JSONB, -- Array of event IDs produced by this step
+    started_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    compensation_step_id UUID, -- Reference to the step that compensates this one
+    FOREIGN KEY (saga_id) REFERENCES saga_instances(saga_id) ON DELETE CASCADE,
+    UNIQUE(saga_id, step_number)
+);
+
+-- Indexes for saga steps
+CREATE INDEX IF NOT EXISTS idx_saga_steps_saga_id ON saga_steps(saga_id);
+CREATE INDEX IF NOT EXISTS idx_saga_steps_status ON saga_steps(status);
+CREATE INDEX IF NOT EXISTS idx_saga_steps_type ON saga_steps(step_type);
+CREATE INDEX IF NOT EXISTS idx_saga_steps_compensation ON saga_steps(compensation_step_id);
+
+-- Saga step definitions table (templates for different saga types)
+CREATE TABLE IF NOT EXISTS saga_step_definitions (
+    definition_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    saga_type VARCHAR(50) NOT NULL,
+    step_number INTEGER NOT NULL,
+    step_name VARCHAR(100) NOT NULL,
+    step_description TEXT,
+    compensation_step_name VARCHAR(100), -- Name of the compensation step
+    is_compensatable BOOLEAN DEFAULT true,
+    timeout_seconds INTEGER DEFAULT 300, -- 5 minutes default
+    max_retries INTEGER DEFAULT 3,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(saga_type, step_number)
+);
+
+-- Insert saga step definitions for money transfer
+INSERT INTO saga_step_definitions (saga_type, step_number, step_name, step_description, compensation_step_name, is_compensatable, timeout_seconds, max_retries)
+VALUES 
+    ('MONEY_TRANSFER', 1, 'VALIDATE_TRANSFER', 'Validate transfer request and account states', NULL, false, 30, 3),
+    ('MONEY_TRANSFER', 2, 'WITHDRAW_FROM_SOURCE', 'Withdraw money from source account', 'COMPENSATE_WITHDRAW', true, 60, 3),
+    ('MONEY_TRANSFER', 3, 'DEPOSIT_TO_TARGET', 'Deposit money to target account', 'COMPENSATE_DEPOSIT', true, 60, 3),
+    ('MONEY_TRANSFER', 4, 'FINALIZE_TRANSFER', 'Mark transfer as completed and send notifications', 'REVERSE_FINALIZATION', true, 30, 2)
+ON CONFLICT (saga_type, step_number) DO NOTHING;
+
+-- Saga events table to track saga-related events
+CREATE TABLE IF NOT EXISTS saga_events (
+    event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    saga_id UUID NOT NULL,
+    event_type VARCHAR(50) NOT NULL, -- 'SAGA_STARTED', 'STEP_COMPLETED', 'SAGA_FAILED', 'COMPENSATION_STARTED', etc.
+    event_data JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    FOREIGN KEY (saga_id) REFERENCES saga_instances(saga_id) ON DELETE CASCADE
+);
+
+-- Indexes for saga events
+CREATE INDEX IF NOT EXISTS idx_saga_events_saga_id ON saga_events(saga_id);
+CREATE INDEX IF NOT EXISTS idx_saga_events_type ON saga_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_saga_events_created_at ON saga_events(created_at);
+
+-- View for saga monitoring and debugging
+CREATE VIEW saga_status_view AS
+SELECT 
+    si.saga_id,
+    si.saga_type,
+    si.status as saga_status,
+    si.correlation_id,
+    si.current_step,
+    si.total_steps,
+    si.started_at,
+    si.completed_at,
+    si.timeout_at,
+    si.error_message,
+    CASE 
+        WHEN si.timeout_at IS NOT NULL AND si.timeout_at < NOW() THEN true
+        ELSE false
+    END as is_timeout,
+    COUNT(ss.step_id) as total_steps_count,
+    COUNT(CASE WHEN ss.status = 'COMPLETED' THEN 1 END) as completed_steps,
+    COUNT(CASE WHEN ss.status = 'FAILED' THEN 1 END) as failed_steps,
+    COUNT(CASE WHEN ss.status = 'COMPENSATED' THEN 1 END) as compensated_steps
+FROM saga_instances si
+LEFT JOIN saga_steps ss ON si.saga_id = ss.saga_id AND ss.step_type = 'FORWARD'
+GROUP BY si.saga_id, si.saga_type, si.status, si.correlation_id, si.current_step, 
+         si.total_steps, si.started_at, si.completed_at, si.timeout_at, si.error_message;
+
+-- Function to cleanup old completed sagas (housekeeping)
+CREATE OR REPLACE FUNCTION cleanup_old_sagas(days_old INTEGER DEFAULT 30)
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM saga_instances 
+    WHERE status IN ('COMPLETED', 'COMPENSATED') 
+    AND completed_at < NOW() - INTERVAL '1 day' * days_old;
+    
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;

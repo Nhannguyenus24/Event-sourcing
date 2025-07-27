@@ -84,8 +84,12 @@ services:
     container_name: transaction-processor-service
     environment:
       - NODE_ENV=production
+      - PORT=3000
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/event_store
       - RABBITMQ_URL=amqp://rabbitmq:password@rabbitmq:5672
+      - EVENT_STORE_URL=http://event-store-service:3000
+    ports:
+      - "3004:3000"
     depends_on:
       - postgres
       - rabbitmq

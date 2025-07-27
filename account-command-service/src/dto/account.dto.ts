@@ -2,13 +2,13 @@ import { IsString, IsNumber, IsOptional, IsUUID, IsPositive, Min } from 'class-v
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateAccountDto {
-  @ApiProperty({ 
-    description: 'Unique identifier for the account',
-    example: '550e8400-e29b-41d4-a716-446655440003',
-    format: 'uuid'
-  })
-  @IsUUID()
-  accountId: string;
+  // @ApiProperty({ 
+  //   description: 'Unique identifier for the account',
+  //   example: '550e8400-e29b-41d4-a716-446655440003',
+  //   format: 'uuid'
+  // })
+  // @IsUUID()
+  // accountId: string;
 
   @ApiProperty({ 
     description: 'Account number',

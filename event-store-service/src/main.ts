@@ -35,7 +35,7 @@ async function bootstrap() {
     },
   });
 
-  const port = process.env.PORT || 3000;
+  const port = 3002;
   await app.listen(port);
   
   console.log(`Event Store Service is running on port ${port}`);

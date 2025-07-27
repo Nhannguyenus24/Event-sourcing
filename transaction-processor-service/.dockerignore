@@ -1,0 +1,39 @@
+node_modules
+npm-debug.log
+Dockerfile
+.dockerignore
+.git
+.gitignore
+README.md
+.env
+.env.local
+.env.development
+.env.test
+coverage
+.nyc_output
+
+# Build outputs that will be recreated
+dist
+build
+
+# Testing
+test
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db 

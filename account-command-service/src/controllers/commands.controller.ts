@@ -1,6 +1,7 @@
 import { Controller, Post, Get, Body, Param, ValidationPipe, HttpStatus, HttpException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiBody } from '@nestjs/swagger';
 import { AccountCommandService } from '../services/account-command.service';
+import { RabbitMQEventPublisher } from '../infrastructure/rabbitmq-event-publisher';
 import {
   CreateAccountDto,
   DepositMoneyDto,
@@ -22,7 +23,10 @@ import { v4 as uuidv4 } from 'uuid';
 @ApiTags('Account Commands')
 @Controller('commands')
 export class CommandsController {
-  constructor(private readonly accountCommandService: AccountCommandService) {}
+  constructor(
+    private readonly accountCommandService: AccountCommandService,
+    private readonly eventPublisher: RabbitMQEventPublisher
+  ) {}
 
   @Post('create-account')
   @ApiOperation({ 
@@ -47,9 +51,11 @@ export class CommandsController {
   })
   @ApiResponse({ status: 400, description: 'Bad request - Account already exists or invalid data' })
   async createAccount(@Body(ValidationPipe) dto: CreateAccountDto) {
+    const accountId = uuidv4()
+    
     const command = new CreateAccountCommand(
       uuidv4(),
-      dto.accountId,
+      accountId,
       dto.accountNumber,
       dto.ownerName,
       dto.initialBalance
@@ -92,6 +98,7 @@ export class CommandsController {
   })
   @ApiResponse({ status: 400, description: 'Bad request - Account not found or invalid amount' })
   async depositMoney(@Body(ValidationPipe) dto: DepositMoneyDto) {
+    console.log('hihihi');
     const command = new DepositMoneyCommand(
       uuidv4(),
       dto.accountId,
@@ -158,49 +165,70 @@ export class CommandsController {
 
   @Post('transfer')
   @ApiOperation({ 
-    summary: 'Transfer money between accounts',
-    description: 'Transfers money from one account to another if sufficient balance is available'
+    summary: 'Request money transfer between accounts',
+    description: 'Submits a transfer request to be processed asynchronously by transaction processor'
   })
   @ApiBody({ type: TransferMoneyDto })
   @ApiResponse({ 
-    status: 200, 
-    description: 'Money transferred successfully',
+    status: 202, 
+    description: 'Transfer request submitted successfully',
     schema: {
       example: {
         status: 'success',
-        message: 'Money transferred successfully',
+        message: 'Transfer request submitted for processing',
         data: {
-          transactionId: 'TXN-1640995400-ghi789',
+          transferRequestId: 'TXN-REQ-1640995400-ghi789',
           fromAccountId: '550e8400-e29b-41d4-a716-446655440001',
           toAccountId: '550e8400-e29b-41d4-a716-446655440002',
           amount: 300,
-          fromAccountBalance: 1000,
-          toAccountBalance: 2300
+          status: 'PENDING'
         }
       }
     }
   })
-  @ApiResponse({ status: 400, description: 'Bad request - Insufficient funds or account not found' })
+  @ApiResponse({ status: 400, description: 'Bad request - Invalid transfer request data' })
   async transferMoney(@Body(ValidationPipe) dto: TransferMoneyDto) {
-    const command = new TransferMoneyCommand(
-      uuidv4(),
-      dto.fromAccountId,
-      dto.toAccountId,
-      dto.amount,
-      dto.description
-    );
+    try {
+      const transferRequestId = `TXN-REQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      // Create transfer request event
+      const transferRequestEvent = {
+        eventId: uuidv4(),
+        eventType: 'TransferRequested',
+        aggregateId: dto.fromAccountId,
+        eventData: {
+          transferRequestId,
+          fromAccountId: dto.fromAccountId,
+          toAccountId: dto.toAccountId,
+          amount: dto.amount,
+          description: dto.description,
+          requestedAt: new Date().toISOString()
+        },
+        version: 1,
+        occurredOn: new Date(),
+        metadata: {
+          source: 'account-command-service',
+          requestOrigin: 'api'
+        }
+      };
 
-    const result = await this.accountCommandService.transferMoney(command);
-    
-    if (!result.success) {
-      throw new HttpException(result.message, HttpStatus.BAD_REQUEST);
+      // Publish to RabbitMQ for transaction processor
+      await this.eventPublisher.publishEvent(transferRequestEvent);
+
+      return {
+        status: 'success',
+        message: 'Transfer request submitted for processing',
+        data: {
+          transferRequestId,
+          fromAccountId: dto.fromAccountId,
+          toAccountId: dto.toAccountId,
+          amount: dto.amount,
+          status: 'PENDING'
+        }
+      };
+    } catch (error) {
+      throw new HttpException(`Failed to submit transfer request: ${error.message}`, HttpStatus.BAD_REQUEST);
     }
-
-    return {
-      status: 'success',
-      message: result.message,
-      data: result.data
-    };
   }
 
   @Post('rollback')

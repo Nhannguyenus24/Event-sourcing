@@ -43,11 +43,9 @@ export class RabbitMQEventPublisher {
   }
 
   async publishEvent(event: DomainEvent): Promise<void> {
-    try {
-      if (!this.channel) {
-        await this.connect();
-      }
+    await this.ensureConnection();
 
+    try {
       const routingKey = `account.${event.eventType}`;
       const message = {
         eventId: event.eventId,
@@ -75,8 +73,86 @@ export class RabbitMQEventPublisher {
       console.log(`Event published: ${event.eventType} for aggregate ${event.aggregateId}`);
     } catch (error) {
       console.error('Failed to publish event:', error);
-      throw error;
+      
+      // If publish fails due to connection issues, try to reconnect and retry once
+      if (this.isConnectionError(error)) {
+        console.log('Connection error detected, attempting to reconnect and retry...');
+        try {
+          await this.reconnect();
+          
+          const routingKey = `account.${event.eventType}`;
+          const message = {
+            eventId: event.eventId,
+            aggregateId: event.aggregateId,
+            eventType: event.eventType,
+            eventData: event.eventData,
+            version: event.version,
+            occurredOn: event.occurredOn.toISOString(),
+            metadata: event.metadata || {}
+          };
+
+          const buffer = Buffer.from(JSON.stringify(message));
+          
+          await this.channel.publish(
+            this.exchangeName,
+            routingKey,
+            buffer,
+            {
+              persistent: true,
+              timestamp: Date.now(),
+              messageId: event.eventId
+            }
+          );
+
+          console.log(`Event published after reconnection: ${event.eventType} for aggregate ${event.aggregateId}`);
+        } catch (retryError) {
+          console.error('Failed to publish event after reconnection:', retryError);
+          throw retryError;
+        }
+      } else {
+        throw error;
+      }
     }
+  }
+
+  private async ensureConnection(): Promise<void> {
+    if (!this.connection || this.connection.destroyed || !this.channel || this.channel.destroyed) {
+      console.log('Connection/channel is not available, connecting...');
+      await this.connect();
+    }
+  }
+
+  private async reconnect(): Promise<void> {
+    try {
+      if (this.channel && !this.channel.destroyed) {
+        await this.channel.close();
+      }
+    } catch (e) {
+      // Ignore errors when closing
+    }
+
+    try {
+      if (this.connection && !this.connection.destroyed) {
+        await this.connection.close();
+      }
+    } catch (e) {
+      // Ignore errors when closing
+    }
+
+    this.channel = null;
+    this.connection = null;
+
+    await this.connect();
+  }
+
+  private isConnectionError(error: any): boolean {
+    return error.message && (
+      error.message.includes('Channel closed') ||
+      error.message.includes('Connection closed') ||
+      error.message.includes('CONNECTION_FORCED') ||
+      error.message.includes('socket hang up') ||
+      error.message.includes('ECONNRESET')
+    );
   }
 
   async publishEvents(events: DomainEvent[]): Promise<void> {
