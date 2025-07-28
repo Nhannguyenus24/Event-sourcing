@@ -35,8 +35,8 @@ async function bootstrap() {
     },
   });
 
-  const port = 3002;
-  await app.listen(port);
+  const port = 3000;
+  await app.listen(port, '0.0.0.0');
   
   console.log(`Event Store Service is running on port ${port}`);
   console.log(`Swagger documentation available at: http://localhost:${port}/api/docs`);
