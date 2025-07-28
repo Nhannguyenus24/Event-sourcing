@@ -196,7 +196,7 @@ docker-compose up --build -d
 
 ### Bước 2: Kiểm tra các services
 - **PostgreSQL**: `localhost:5432` (eventstore/eventstore)
-- **RabbitMQ Management**: `http://localhost:15672` (rabbitmq/password)
+- **RabbitMQ Management**: `http://localhost:15673` (rabbitmq/password)
 - **Account Command Service**: `http://localhost:3001`
 - **Event Store Service**: `http://localhost:3002`
 - **Query Read Service**: `http://localhost:3003`
@@ -566,7 +566,7 @@ npm run start:prod
 docker-compose logs -f account-command-service
 
 # Kiểm tra RabbitMQ queues
-curl -u rabbitmq:password http://localhost:15672/api/queues
+curl -u rabbitmq:password http://localhost:15673/api/queues
 
 # Kết nối PostgreSQL để xem events
 docker exec -it event-sourcing-postgres psql -U eventstore -d eventstore
@@ -622,7 +622,7 @@ docker-compose up --build -d
 ```
 
 ### Test RabbitMQ Connection
-- Truy cập RabbitMQ Management UI: `http://localhost:15672`
+- Truy cập RabbitMQ Management UI: `http://localhost:15673`
 - Login: `rabbitmq/password`
 - Kiểm tra:
   - **Exchanges**: `event-sourcing-exchange`
@@ -648,7 +648,7 @@ FROM accounts;
 
 | Vấn đề | Nguyên nhân | Giải pháp |
 |--------|-------------|-----------|
-| Port conflicts | Ports 3001-3004, 5432, 5672, 15672 đã được sử dụng | Kiểm tra và stop các services đang chạy |
+| Port conflicts | Ports 3001-3004, 5432, 5673, 15673 đã được sử dụng | Kiểm tra và stop các services đang chạy |
 | Database connection | PostgreSQL chưa ready | Đợi PostgreSQL start hoàn toàn |
 | RabbitMQ connection | RabbitMQ service unhealthy | Restart RabbitMQ container |
 | Missing dependencies | Chưa chạy `npm install` | Install dependencies trong mỗi service |

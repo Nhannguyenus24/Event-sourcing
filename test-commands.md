@@ -67,7 +67,7 @@ curl http://localhost:3003/api/query/accounts/550e8400-e29b-41d4-a716-4466554400
 ```
 
 ## Verify RabbitMQ
-- Access management UI: http://localhost:15672 (rabbitmq/password)
+- Access management UI: http://localhost:15673 (rabbitmq/password)
 - Check exchanges: `event-sourcing-exchange`
 - Check queues: `account.events`, `query.events`, `transaction.events`
 
