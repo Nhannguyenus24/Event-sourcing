@@ -40,8 +40,8 @@ async function bootstrap() {
     },
   });
 
-  const port = 3003;
-  await app.listen(port);
+  const port = 3000;
+  await app.listen(port, '0.0.0.0');
   
   console.log(`Query Read Service is running on: http://localhost:${port}`);
   console.log(`Swagger documentation available at: http://localhost:${port}/api/docs`);
