@@ -71,6 +71,7 @@ export class AccountCommandService {
     try {
       // Load account from event store
       const account = await this.accountRepository.getById(command.accountId);
+      console.log('Hahaha', account)
       if (!account) {
         return {
           success: false,

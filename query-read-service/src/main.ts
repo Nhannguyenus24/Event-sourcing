@@ -40,7 +40,7 @@ async function bootstrap() {
     },
   });
 
-  const port = process.env.PORT || 3000;
+  const port = 3003;
   await app.listen(port);
   
   console.log(`Query Read Service is running on: http://localhost:${port}`);
