@@ -116,6 +116,14 @@ services:
       - event-sourcing-network
     restart: unless-stopped
 
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    networks:
+      - event-sourcing-network
+
 volumes:
   postgres_data:
   rabbitmq_data:
